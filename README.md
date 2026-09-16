@@ -170,7 +170,7 @@ Once installed, you'll find the LanPaint nodes under the "sampling" category in 
 ### Standalone Wan2.2-TI2V-5B video inpainting (experimental)
 
 The `wan22-5b-standalone-inpaint` branch also provides a command-line baseline
-that reuses a local VideoX-Fun checkout and local Wan2.2-TI2V-5B weights. It
+that reuses the official `Wan-Video/Wan2.2` runtime and local Wan2.2-TI2V-5B weights. It
 does not launch ComfyUI and does not download model weights.
 
 The default mask convention is **black = regenerate** and **white = keep**.
@@ -183,7 +183,7 @@ pip install -r requirements-wan22-standalone.txt
 
 CUDA_VISIBLE_DEVICES=0 python examples/wan22_5b_video_inpaint.py \
   --model_path /mnt/DataPart/jianghongda/VideoX-Fun/models/Diffusion_Transformer/Wan2.2-TI2V-5B \
-  --videox_fun_path /mnt/DataPart/jianghongda/VideoX-Fun \
+  --wan22_path /mnt/DataPart/jianghongda/related_work/Wan2.2 \
   --video gs_render.mp4 \
   --mask mask.mp4 \
   --first_frame image.jpg \
@@ -710,7 +710,6 @@ url={https://openreview.net/forum?id=JPC8JyOUSW},
 note={}
 }
 ```
-
 
 
 

@@ -167,6 +167,39 @@ Check our latest [Krea2 Example](#example-krea2-inpaintlanpaint-k-sampler-3-step
 
 Once installed, you'll find the LanPaint nodes under the "sampling" category in ComfyUI. Use them just like the default KSampler for high-quality inpainting!
 
+### Standalone Wan2.2-TI2V-5B video inpainting (experimental)
+
+The `wan22-5b-standalone-inpaint` branch also provides a command-line baseline
+that reuses a local VideoX-Fun checkout and local Wan2.2-TI2V-5B weights. It
+does not launch ComfyUI and does not download model weights.
+
+The default mask convention is **black = regenerate** and **white = keep**.
+Inputs are checked for matching FPS, frame count, and resolution, then the mask
+is converted to a strict binary mask. The output directory also receives a
+`*_comparison.mp4` (input | regenerate mask | result) and a JSON run record.
+
+```bash
+pip install -r requirements-wan22-standalone.txt
+
+CUDA_VISIBLE_DEVICES=0 python examples/wan22_5b_video_inpaint.py \
+  --model_path /mnt/DataPart/jianghongda/VideoX-Fun/models/Diffusion_Transformer/Wan2.2-TI2V-5B \
+  --videox_fun_path /mnt/DataPart/jianghongda/VideoX-Fun \
+  --video gs_render.mp4 \
+  --mask mask.mp4 \
+  --first_frame image.jpg \
+  --prompt prompt.txt \
+  --output output.mp4 \
+  --num_frames 81 \
+  --steps 20 \
+  --lanpaint_steps 2 \
+  --cfg 6.0
+```
+
+For the first sanity check, use `--height 480 --width 832 --num_frames 21
+--steps 8 --lanpaint_steps 1`. Run the same command with
+`--lanpaint_steps 0`, `1`, and `2` for the ordinary-Wan/LanPaint×1/LanPaint×2
+comparison. The script uses full GPU loading and does not enable model offload.
+
 
 ## **How to Use Examples:**  
 1. Navigate to the **example** folder (i.e example_1), download all pictures.  
@@ -677,7 +710,6 @@ url={https://openreview.net/forum?id=JPC8JyOUSW},
 note={}
 }
 ```
-
 
 
 

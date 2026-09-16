@@ -51,14 +51,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fps", type=float, default=None, help="Output FPS; input FPS is used when omitted")
     parser.add_argument("--mask_threshold", type=int, default=127)
     parser.add_argument("--white_is_regenerate", action="store_true", help="Invert the default black=regenerate convention")
-    parser.add_argument("--lanpaint_lambda", type=float, default=5.0)
-    parser.add_argument("--lanpaint_step_size", type=float, default=0.15)
+    parser.add_argument("--lanpaint_lambda", type=float, default=16.0)
+    parser.add_argument("--lanpaint_step_size", type=float, default=0.3)
     parser.add_argument("--lanpaint_beta", type=float, default=1.0)
-    parser.add_argument("--lanpaint_friction", type=float, default=15.0)
-    parser.add_argument("--lanpaint_early_stop", type=int, default=1)
+    parser.add_argument("--lanpaint_friction", type=float, default=1.0)
+    parser.add_argument("--lanpaint_early_stop", type=int, default=0)
     parser.add_argument("--dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--device", default="cuda")
-    parser.add_argument("--shift", type=float, default=5.0)
+    parser.add_argument(
+        "--shift",
+        type=float,
+        default=8.0,
+        help="Flow shift; 8.0 matches the embedded official LanPaint 5B workflow",
+    )
+    parser.add_argument("--official_t2v_steps", type=int, default=50)
+    parser.add_argument("--official_t2v_shift", type=float, default=5.0)
+    parser.add_argument("--official_i2v_steps", type=int, default=40)
+    parser.add_argument("--official_i2v_shift", type=float, default=3.0)
     parser.add_argument("--compare", action="store_true", help="Generate matched LanPaint 0/1/2 results in one run")
     parser.add_argument(
         "--compare_official",
@@ -187,9 +196,9 @@ def main() -> None:
             input_prompt=prompt,
             size=(args.width, args.height),
             frame_num=args.num_frames,
-            shift=args.shift,
+            shift=args.official_t2v_shift,
             sample_solver="unipc",
-            sampling_steps=args.steps,
+            sampling_steps=args.official_t2v_steps,
             guide_scale=args.cfg,
             n_prompt=args.negative_prompt,
             seed=args.seed,
@@ -211,9 +220,9 @@ def main() -> None:
                 img=first,
                 max_area=args.width * args.height,
                 frame_num=args.num_frames,
-                shift=args.shift,
+                shift=args.official_i2v_shift,
                 sample_solver="unipc",
-                sampling_steps=args.steps,
+                sampling_steps=args.official_i2v_steps,
                 guide_scale=args.cfg,
                 n_prompt=args.negative_prompt,
                 seed=args.seed,
@@ -236,9 +245,13 @@ def main() -> None:
                     "model_path": str(model_path),
                     "wan22_path": str(wan22_source),
                     "seed": args.seed,
-                    "steps": args.steps,
+                    "inpaint_steps": args.steps,
                     "cfg": args.cfg,
-                    "shift": args.shift,
+                    "inpaint_shift": args.shift,
+                    "official_t2v_steps": args.official_t2v_steps,
+                    "official_t2v_shift": args.official_t2v_shift,
+                    "official_i2v_steps": args.official_i2v_steps,
+                    "official_i2v_shift": args.official_i2v_shift,
                     "outputs": diagnostic_outputs,
                 },
                 ensure_ascii=False,

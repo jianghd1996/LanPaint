@@ -1,9 +1,8 @@
 """Small runtime helpers for the standalone Wan2.2 video-inpainting example.
 
-This module intentionally has no ComfyUI dependency.  The actual Wan model is
-loaded lazily by ``examples/wan22_5b_video_inpaint.py`` from a VideoX-Fun
-checkout, while these helpers cover input validation and LanPaint's model
-adapter.
+This module intentionally has no ComfyUI dependency. The actual Wan model is
+loaded lazily from the official Wan-Video/Wan2.2 checkout, while these helpers
+cover input validation and LanPaint's model adapter.
 """
 
 from __future__ import annotations
@@ -58,8 +57,7 @@ def read_video_pair(
     """Read and align an RGB video and a binary mask video.
 
     Returns ``video`` in ``[1, 3, T, H, W]`` / [0, 1] and ``regen_mask`` in
-    ``[1, 1, T, H, W]`` / {0, 255}.  The latter matches VideoX-Fun's inpaint
-    pipeline convention: 255 regenerates and 0 keeps.
+    ``[1, 1, T, H, W]`` / {0, 255}: 255 regenerates and 0 keeps.
     """
 
     video_info = probe_video(video_path)
@@ -163,6 +161,7 @@ def lanpaint_flow_step(
         Beta=beta,
         StepSize=step_size,
         IS_FLOW=True,
+        MinStepFrac=1.0,
     )
     working = latents.clone()
     denoised = painter(

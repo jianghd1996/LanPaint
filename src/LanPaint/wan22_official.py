@@ -103,6 +103,8 @@ class Wan22OfficialLanPaint(WanTI2V):
         sigmas = torch.cat([sigmas, sigmas.new_zeros(1)])
         diagnostics = {
             "sampler": "flow_euler",
+            "scheduler": "comfy_simple_equivalent",
+            "flow_shift": shift,
             "mask_latent_coverage": float(regen.float().mean().item()),
             "source_latent": self._tensor_stats(source_latent),
             "initial_noise": self._tensor_stats(noise),
@@ -159,12 +161,16 @@ class Wan22OfficialLanPaint(WanTI2V):
                         step_size=lanpaint_step_size,
                     )
                 else:
-                    # Baseline equivalent of ComfyUI's masked KSampler input:
-                    # inject the known latent at the *current* flow noise
-                    # level, never as a clean latent at non-zero sigma.
+                    # Exact zero-thinking path of ComfyUI's KSamplerX0Inpaint:
+                    # inject noisy known content, predict x0, then force the
+                    # known part of denoised x0 back to the clean source before
+                    # Euler converts x0 to d=(x-x0)/sigma.
                     known_noisy = sigma_safe * noise + (1.0 - sigma_safe) * source_latent
                     latent = latent * regen + known_noisy * (1.0 - regen)
-                    velocity = predict_velocity(latent, guide_scale)
+                    model_velocity = predict_velocity(latent, guide_scale)
+                    denoised = latent - sigma_safe * model_velocity
+                    denoised = denoised * regen + source_latent * (1.0 - regen)
+                    velocity = (latent - denoised) / sigma_safe
 
                 # FlowMatch Euler: dx/dsigma is the model's flow prediction.
                 # This is the outer sampler used by the official LanPaint Wan

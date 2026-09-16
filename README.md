@@ -180,6 +180,8 @@ is converted to a strict binary mask. The output directory also receives a
 and a JSON run record. Use `--compare` for matched LP0/LP1/LP2 outputs and
 `--compare_official` to additionally write an official-VAE roundtrip plus
 untouched official Wan T2V/I2V references for pipeline diagnosis.
+`run_wan22_5b_sanity.sh` runs a 21-frame LP0/LP1/LP2 check with the sampler
+parameters embedded in LanPaint's demonstrated Wan2.2-TI2V-5B workflow.
 
 ```bash
 pip install -r requirements-wan22-standalone.txt
@@ -713,5 +715,4 @@ url={https://openreview.net/forum?id=JPC8JyOUSW},
 note={}
 }
 ```
-
 

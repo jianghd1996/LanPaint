@@ -176,7 +176,10 @@ does not launch ComfyUI and does not download model weights.
 The default mask convention is **black = regenerate** and **white = keep**.
 Inputs are checked for matching FPS, frame count, and resolution, then the mask
 is converted to a strict binary mask. The output directory also receives a
-`*_comparison.mp4` (input | regenerate mask | result) and a JSON run record.
+`*_comparison.mp4` (input | regenerate mask | raw decode | exact composite)
+and a JSON run record. Use `--compare` for matched LP0/LP1/LP2 outputs and
+`--compare_official` to additionally write an official-VAE roundtrip plus
+untouched official Wan T2V/I2V references for pipeline diagnosis.
 
 ```bash
 pip install -r requirements-wan22-standalone.txt
@@ -710,6 +713,5 @@ url={https://openreview.net/forum?id=JPC8JyOUSW},
 note={}
 }
 ```
-
 
 

@@ -1,0 +1,12 @@
+# Install the matching VideoX-Fun requirements first. These are the additional
+# direct runtime dependencies used by the standalone entry point.
+imageio[ffmpeg]
+opencv-python-headless
+omegaconf
+einops
+torch
+torchvision
+transformers
+diffusers
+safetensors
+

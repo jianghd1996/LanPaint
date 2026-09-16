@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -42,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=20)
     parser.add_argument("--lanpaint_steps", type=int, choices=range(0, 21), default=1)
     parser.add_argument("--cfg", type=float, default=6.0)
-    parser.add_argument("--lanpaint_cfg", type=float, default=10000.0)
+    parser.add_argument("--lanpaint_cfg", type=float, default=5.0)
     parser.add_argument("--seed", type=int, default=43)
     parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--width", type=int, default=832)
@@ -56,6 +57,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lanpaint_early_stop", type=int, default=1)
     parser.add_argument("--dtype", choices=("bf16", "fp16"), default="bf16")
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--shift", type=float, default=5.0)
+    parser.add_argument("--compare", action="store_true", help="Generate matched LanPaint 0/1/2 results in one run")
     parser.add_argument("--no_exact_composite", action="store_true", help="Do not restore keep pixels after decoding")
     return parser.parse_args()
 
@@ -140,50 +143,65 @@ def main() -> None:
     device = torch.device(args.device)
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
     pipeline = load_pipeline(model_path, device, dtype)
-    generated = pipeline.inpaint(
-        prompt=prompt,
-        video=video,
-        regenerate_mask=regenerate_mask,
-        sampling_steps=args.steps,
-        guide_scale=args.cfg,
-        lanpaint_steps=args.lanpaint_steps,
-        lanpaint_cfg=args.lanpaint_cfg,
-        lanpaint_lambda=args.lanpaint_lambda,
-        lanpaint_step_size=args.lanpaint_step_size,
-        lanpaint_beta=args.lanpaint_beta,
-        lanpaint_friction=args.lanpaint_friction,
-        lanpaint_early_stop=args.lanpaint_early_stop,
-        shift=5.0,
-        negative_prompt=args.negative_prompt,
-        seed=args.seed,
-    )
-    result = generated.unsqueeze(0).add(1.0).div(2.0).clamp(0, 1).cpu()
-
-    regen = (regenerate_mask >= 127.5).to(result.dtype)
-    if not args.no_exact_composite:
-        result = result * regen + video.to(result.dtype) * (1.0 - regen)
     output = Path(args.output).resolve()
     fps = args.fps or input_info.fps
-    save_video(result, output, fps)
-
+    variants = [0, 1, 2] if args.compare else [args.lanpaint_steps]
+    base_stem = re.sub(r"_lp\d+$", "", output.stem)
+    regen = (regenerate_mask >= 127.5).to(video.dtype)
     mask_rgb = regen.repeat(1, 3, 1, 1, 1)
-    comparison = torch.cat([video, mask_rgb, result], dim=-1)
-    comparison_path = output.with_name(f"{output.stem}_comparison{output.suffix}")
-    save_video(comparison, comparison_path, fps)
-    metadata = vars(args) | {
-        "prompt_text": prompt,
-        "resolved_model_path": str(model_path),
-        "resolved_wan22_path": str(wan22_source),
-        "input_fps": input_info.fps,
-        "input_frames": input_info.frames,
-        "mask_semantics": "black=regenerate, white=keep" if not args.white_is_regenerate else "white=regenerate, black=keep",
-        "elapsed_seconds": time.time() - started,
-        "comparison_output": str(comparison_path),
-    }
-    output.with_suffix(".json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Saved: {output}")
-    print(f"Saved: {comparison_path}")
-    print(f"Saved: {output.with_suffix('.json')}")
+    all_results = []
+
+    for variant in variants:
+        variant_started = time.time()
+        generated, diagnostics = pipeline.inpaint(
+            prompt=prompt,
+            video=video,
+            regenerate_mask=regenerate_mask,
+            sampling_steps=args.steps,
+            guide_scale=args.cfg,
+            lanpaint_steps=variant,
+            lanpaint_cfg=args.lanpaint_cfg,
+            lanpaint_lambda=args.lanpaint_lambda,
+            lanpaint_step_size=args.lanpaint_step_size,
+            lanpaint_beta=args.lanpaint_beta,
+            lanpaint_friction=args.lanpaint_friction,
+            lanpaint_early_stop=args.lanpaint_early_stop,
+            shift=args.shift,
+            negative_prompt=args.negative_prompt,
+            seed=args.seed,
+        )
+        raw_result = generated.unsqueeze(0).add(1.0).div(2.0).clamp(0, 1).cpu()
+        result = raw_result
+        if not args.no_exact_composite:
+            result = raw_result * regen + video * (1.0 - regen)
+        variant_output = output if len(variants) == 1 else output.with_name(f"{base_stem}_lp{variant}{output.suffix}")
+        save_video(result, variant_output, fps)
+        comparison = torch.cat([video, mask_rgb, raw_result, result], dim=-1)
+        comparison_path = variant_output.with_name(f"{variant_output.stem}_comparison{variant_output.suffix}")
+        save_video(comparison, comparison_path, fps)
+        metadata = vars(args) | {
+            "actual_lanpaint_steps": variant,
+            "prompt_text": prompt,
+            "resolved_model_path": str(model_path),
+            "resolved_wan22_path": str(wan22_source),
+            "input_fps": input_info.fps,
+            "input_frames": input_info.frames,
+            "mask_semantics": "black=regenerate, white=keep" if not args.white_is_regenerate else "white=regenerate, black=keep",
+            "elapsed_seconds": time.time() - variant_started,
+            "comparison_layout": "input | regenerate mask | raw decode | exact composite",
+            "comparison_output": str(comparison_path),
+            "diagnostics": diagnostics,
+        }
+        variant_output.with_suffix(".json").write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+        all_results.append(result)
+        print(f"Saved LP{variant}: {variant_output}")
+
+    if len(all_results) > 1:
+        grid = torch.cat([video, mask_rgb, *all_results], dim=-1)
+        grid_path = output.with_name(f"{base_stem}_all_comparisons{output.suffix}")
+        save_video(grid, grid_path, fps)
+        print(f"Saved all comparisons: {grid_path}")
+    print(f"Total elapsed: {time.time() - started:.1f}s")
 
 
 if __name__ == "__main__":

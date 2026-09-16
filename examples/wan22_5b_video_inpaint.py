@@ -18,6 +18,7 @@ from pathlib import Path
 import imageio.v2 as imageio
 import numpy as np
 import torch
+import torch.nn.functional as F
 from PIL import Image
 
 
@@ -59,6 +60,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--shift", type=float, default=5.0)
     parser.add_argument("--compare", action="store_true", help="Generate matched LanPaint 0/1/2 results in one run")
+    parser.add_argument(
+        "--compare_official",
+        action="store_true",
+        help="Also run untouched official Wan T2V/I2V and a VAE roundtrip for diagnosis",
+    )
     parser.add_argument("--no_exact_composite", action="store_true", help="Do not restore keep pixels after decoding")
     return parser.parse_args()
 
@@ -87,6 +93,15 @@ def save_video(tensor: torch.Tensor, path: Path, fps: float) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     frames = tensor[0].permute(1, 2, 3, 0).detach().float().cpu().clamp(0, 1).numpy()
     imageio.mimsave(path, (frames * 255.0).round().astype(np.uint8), fps=fps, macro_block_size=1)
+
+
+def normalize_generated(tensor: torch.Tensor, frames: int, height: int, width: int) -> torch.Tensor:
+    """Convert an official Wan C,T,H,W [-1,1] result to B,C,T,H,W [0,1]."""
+
+    value = tensor.unsqueeze(0).float().add(1.0).div(2.0).clamp(0, 1).cpu()
+    if value.shape[-3:] != (frames, height, width):
+        value = F.interpolate(value, size=(frames, height, width), mode="trilinear", align_corners=False)
+    return value
 
 
 def load_pipeline(model_path: Path, device: torch.device, dtype: torch.dtype):
@@ -133,6 +148,7 @@ def main() -> None:
         black_is_regenerate=not args.white_is_regenerate,
         threshold=args.mask_threshold,
     )
+    first = None
     if args.first_frame:
         first = Image.open(args.first_frame).convert("RGB").resize((args.width, args.height), Image.Resampling.LANCZOS)
         first_tensor = torch.from_numpy(np.asarray(first).copy()).permute(2, 0, 1).float() / 255.0
@@ -150,6 +166,86 @@ def main() -> None:
     regen = (regenerate_mask >= 127.5).to(video.dtype)
     mask_rgb = regen.repeat(1, 3, 1, 1, 1)
     all_results = []
+
+    if args.compare_official:
+        diagnostic_outputs = {}
+
+        diagnostic_started = time.time()
+        reconstructed = normalize_generated(
+            pipeline.vae_roundtrip(video), args.num_frames, args.height, args.width
+        )
+        vae_path = output.with_name(f"{base_stem}_vae_roundtrip{output.suffix}")
+        save_video(reconstructed, vae_path, fps)
+        diagnostic_outputs["vae_roundtrip"] = {
+            "path": str(vae_path),
+            "elapsed_seconds": time.time() - diagnostic_started,
+        }
+        print(f"Saved official VAE roundtrip: {vae_path}")
+
+        diagnostic_started = time.time()
+        official_t2v = pipeline.t2v(
+            input_prompt=prompt,
+            size=(args.width, args.height),
+            frame_num=args.num_frames,
+            shift=args.shift,
+            sample_solver="unipc",
+            sampling_steps=args.steps,
+            guide_scale=args.cfg,
+            n_prompt=args.negative_prompt,
+            seed=args.seed,
+            offload_model=False,
+        )
+        official_t2v = normalize_generated(official_t2v, args.num_frames, args.height, args.width)
+        t2v_path = output.with_name(f"{base_stem}_official_t2v{output.suffix}")
+        save_video(official_t2v, t2v_path, fps)
+        diagnostic_outputs["official_t2v"] = {
+            "path": str(t2v_path),
+            "elapsed_seconds": time.time() - diagnostic_started,
+        }
+        print(f"Saved untouched official T2V: {t2v_path}")
+
+        if first is not None:
+            diagnostic_started = time.time()
+            official_i2v = pipeline.i2v(
+                input_prompt=prompt,
+                img=first,
+                max_area=args.width * args.height,
+                frame_num=args.num_frames,
+                shift=args.shift,
+                sample_solver="unipc",
+                sampling_steps=args.steps,
+                guide_scale=args.cfg,
+                n_prompt=args.negative_prompt,
+                seed=args.seed,
+                offload_model=False,
+            )
+            official_i2v = normalize_generated(official_i2v, args.num_frames, args.height, args.width)
+            i2v_path = output.with_name(f"{base_stem}_official_i2v{output.suffix}")
+            save_video(official_i2v, i2v_path, fps)
+            diagnostic_outputs["official_i2v"] = {
+                "path": str(i2v_path),
+                "elapsed_seconds": time.time() - diagnostic_started,
+            }
+            print(f"Saved untouched official I2V: {i2v_path}")
+
+        diagnostic_path = output.with_name(f"{base_stem}_official_diagnostics.json")
+        diagnostic_path.write_text(
+            json.dumps(
+                {
+                    "prompt_text": prompt,
+                    "model_path": str(model_path),
+                    "wan22_path": str(wan22_source),
+                    "seed": args.seed,
+                    "steps": args.steps,
+                    "cfg": args.cfg,
+                    "shift": args.shift,
+                    "outputs": diagnostic_outputs,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
     for variant in variants:
         variant_started = time.time()

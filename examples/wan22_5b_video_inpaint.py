@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Standalone Wan2.2-TI2V-5B + LanPaint video inpainting.
 
-The script reuses the model definitions shipped by VideoX-Fun but does not
-start or depend on ComfyUI. Input masks default to the user's convention:
+The script reuses the official Wan-Video/Wan2.2 model definitions and does not
+depend on VideoX-Fun or ComfyUI. Input masks default to the user's convention:
 black pixels regenerate, white pixels keep.
 """
 
@@ -17,7 +17,6 @@ from pathlib import Path
 import imageio.v2 as imageio
 import numpy as np
 import torch
-from omegaconf import OmegaConf
 from PIL import Image
 
 
@@ -32,8 +31,7 @@ DEFAULT_NEGATIVE_PROMPT = (
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("--model_path", default=DEFAULT_MODEL_PATH)
-    parser.add_argument("--videox_fun_path", default=None, help="VideoX-Fun checkout; auto-detected from model_path")
-    parser.add_argument("--config", default=None, help="Wan 5B YAML; defaults to config/wan2.2/wan_civitai_5b.yaml")
+    parser.add_argument("--wan22_path", default=None, help="Official Wan-Video/Wan2.2 source checkout")
     parser.add_argument("--video", required=True)
     parser.add_argument("--mask", required=True)
     parser.add_argument("--first_frame", default=None)
@@ -62,14 +60,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def find_videox_fun(model_path: Path, explicit: str | None) -> Path:
+def find_wan22_source(model_path: Path, explicit: str | None) -> Path:
     candidates = [] if explicit is None else [Path(explicit)]
-    candidates.extend([model_path, *model_path.parents])
+    candidates.extend([
+        Path("/mnt/DataPart/jianghongda/related_work/Wan2.2"),
+        model_path,
+        *model_path.parents,
+    ])
     for candidate in candidates:
-        if (candidate / "videox_fun").is_dir() and (candidate / "config" / "wan2.2").is_dir():
+        if (candidate / "wan/textimage2video.py").is_file() and (candidate / "wan/configs/wan_ti2v_5B.py").is_file():
             return candidate.resolve()
     raise FileNotFoundError(
-        "Cannot find the VideoX-Fun source tree. Pass --videox_fun_path /mnt/DataPart/jianghongda/VideoX-Fun"
+        "Cannot find the official Wan2.2 source tree. Clone https://github.com/Wan-Video/Wan2.2 and pass --wan22_path."
     )
 
 
@@ -84,51 +86,22 @@ def save_video(tensor: torch.Tensor, path: Path, fps: float) -> None:
     imageio.mimsave(path, (frames * 255.0).round().astype(np.uint8), fps=fps, macro_block_size=1)
 
 
-def load_pipeline(model_path: Path, config_path: Path, device: torch.device, dtype: torch.dtype):
-    from diffusers import FlowMatchEulerDiscreteScheduler
-    from transformers import AutoTokenizer
-    from videox_fun.models import AutoencoderKLWan, AutoencoderKLWan3_8, Wan2_2Transformer3DModel, WanT5EncoderModel
-    from videox_fun.utils.utils import filter_kwargs
-    from LanPaint.wan22_pipeline import Wan22LanPaintPipeline
+def load_pipeline(model_path: Path, device: torch.device, dtype: torch.dtype):
+    from wan.configs import WAN_CONFIGS
+    from LanPaint.wan22_official import Wan22OfficialLanPaint
 
-    config = OmegaConf.load(config_path)
-    additional = OmegaConf.to_container(config["transformer_additional_kwargs"])
-    transformer_subpath = config["transformer_additional_kwargs"].get("transformer_low_noise_model_subpath", "transformer")
-    transformer = Wan2_2Transformer3DModel.from_pretrained(
-        str(model_path / transformer_subpath),
-        transformer_additional_kwargs=additional,
-        low_cpu_mem_usage=True,
-        torch_dtype=dtype,
+    return Wan22OfficialLanPaint(
+        config=WAN_CONFIGS["ti2v-5B"],
+        checkpoint_dir=str(model_path),
+        device_id=device.index or 0,
+        rank=0,
+        t5_fsdp=False,
+        dit_fsdp=False,
+        use_sp=False,
+        t5_cpu=False,
+        init_on_cpu=False,
+        convert_model_dtype=dtype != WAN_CONFIGS["ti2v-5B"].param_dtype,
     )
-    vae_cls = {"AutoencoderKLWan": AutoencoderKLWan, "AutoencoderKLWan3_8": AutoencoderKLWan3_8}[
-        config["vae_kwargs"].get("vae_type", "AutoencoderKLWan")
-    ]
-    vae = vae_cls.from_pretrained(
-        str(model_path / config["vae_kwargs"].get("vae_subpath", "vae")),
-        additional_kwargs=OmegaConf.to_container(config["vae_kwargs"]),
-    ).to(dtype)
-    tokenizer = AutoTokenizer.from_pretrained(
-        str(model_path / config["text_encoder_kwargs"].get("tokenizer_subpath", "tokenizer"))
-    )
-    text_encoder = WanT5EncoderModel.from_pretrained(
-        str(model_path / config["text_encoder_kwargs"].get("text_encoder_subpath", "text_encoder")),
-        additional_kwargs=OmegaConf.to_container(config["text_encoder_kwargs"]),
-        low_cpu_mem_usage=True,
-        torch_dtype=dtype,
-    ).eval()
-    scheduler = FlowMatchEulerDiscreteScheduler(
-        **filter_kwargs(FlowMatchEulerDiscreteScheduler, OmegaConf.to_container(config["scheduler_kwargs"]))
-    )
-    pipeline = Wan22LanPaintPipeline(
-        transformer=transformer,
-        transformer_2=None,
-        vae=vae,
-        tokenizer=tokenizer,
-        text_encoder=text_encoder,
-        scheduler=scheduler,
-    )
-    pipeline.to(device=device)
-    return pipeline
 
 
 def main() -> None:
@@ -137,13 +110,12 @@ def main() -> None:
     model_path = Path(args.model_path).resolve()
     if not model_path.is_dir():
         raise FileNotFoundError(f"Model directory does not exist: {model_path}")
-    videox_fun = find_videox_fun(model_path, args.videox_fun_path)
-    sys.path.insert(0, str(videox_fun))
+    wan22_source = find_wan22_source(model_path, args.wan22_path)
+    sys.path.insert(0, str(wan22_source))
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
     from LanPaint.wan22_runtime import read_video_pair
 
-    config_path = Path(args.config).resolve() if args.config else videox_fun / "config/wan2.2/wan_civitai_5b.yaml"
     if args.height % 16 or args.width % 16:
         raise ValueError("--height and --width must be divisible by 16 for Wan2.2-TI2V-5B")
     if args.num_frames < 1:
@@ -167,20 +139,13 @@ def main() -> None:
     prompt = read_prompt(args.prompt)
     device = torch.device(args.device)
     dtype = torch.bfloat16 if args.dtype == "bf16" else torch.float16
-    pipeline = load_pipeline(model_path, config_path, device, dtype)
-    generator = torch.Generator(device=device).manual_seed(args.seed)
-    result = pipeline(
+    pipeline = load_pipeline(model_path, device, dtype)
+    generated = pipeline.inpaint(
         prompt=prompt,
-        negative_prompt=args.negative_prompt,
         video=video,
-        mask_video=regenerate_mask,
-        height=args.height,
-        width=args.width,
-        num_frames=args.num_frames,
-        num_inference_steps=args.steps,
-        guidance_scale=args.cfg,
-        generator=generator,
-        output_type="pil",
+        regenerate_mask=regenerate_mask,
+        sampling_steps=args.steps,
+        guide_scale=args.cfg,
         lanpaint_steps=args.lanpaint_steps,
         lanpaint_cfg=args.lanpaint_cfg,
         lanpaint_lambda=args.lanpaint_lambda,
@@ -188,7 +153,11 @@ def main() -> None:
         lanpaint_beta=args.lanpaint_beta,
         lanpaint_friction=args.lanpaint_friction,
         lanpaint_early_stop=args.lanpaint_early_stop,
-    ).videos
+        shift=5.0,
+        negative_prompt=args.negative_prompt,
+        seed=args.seed,
+    )
+    result = generated.unsqueeze(0).add(1.0).div(2.0).clamp(0, 1).cpu()
 
     regen = (regenerate_mask >= 127.5).to(result.dtype)
     if not args.no_exact_composite:
@@ -204,8 +173,7 @@ def main() -> None:
     metadata = vars(args) | {
         "prompt_text": prompt,
         "resolved_model_path": str(model_path),
-        "resolved_videox_fun_path": str(videox_fun),
-        "resolved_config": str(config_path),
+        "resolved_wan22_path": str(wan22_source),
         "input_fps": input_info.fps,
         "input_frames": input_info.frames,
         "mask_semantics": "black=regenerate, white=keep" if not args.white_is_regenerate else "white=regenerate, black=keep",

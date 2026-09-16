@@ -1,12 +1,10 @@
-# Install the matching VideoX-Fun requirements first. These are the additional
-# direct runtime dependencies used by the standalone entry point.
+# Install the official Wan-Video/Wan2.2 requirements first. These are the
+# additional direct dependencies used by the standalone entry point.
 imageio[ffmpeg]
 opencv-python-headless
-omegaconf
 einops
 torch
 torchvision
 transformers
 diffusers
 safetensors
-

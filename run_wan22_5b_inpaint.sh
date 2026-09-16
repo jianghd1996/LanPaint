@@ -18,6 +18,7 @@ CUDA_VISIBLE_DEVICES=4 python examples/wan22_5b_video_inpaint.py \
   --steps 20 \
   --lanpaint_steps 1 \
   --compare \
+  --compare_official \
   --lanpaint_cfg 5.0 \
   --cfg 5.0 \
   --seed 43

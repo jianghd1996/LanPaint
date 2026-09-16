@@ -95,7 +95,7 @@ def load_pipeline(model_path: Path, config_path: Path, device: torch.device, dty
     additional = OmegaConf.to_container(config["transformer_additional_kwargs"])
     transformer_subpath = config["transformer_additional_kwargs"].get("transformer_low_noise_model_subpath", "transformer")
     transformer = Wan2_2Transformer3DModel.from_pretrained(
-        model_path / transformer_subpath,
+        str(model_path / transformer_subpath),
         transformer_additional_kwargs=additional,
         low_cpu_mem_usage=True,
         torch_dtype=dtype,
@@ -104,14 +104,14 @@ def load_pipeline(model_path: Path, config_path: Path, device: torch.device, dty
         config["vae_kwargs"].get("vae_type", "AutoencoderKLWan")
     ]
     vae = vae_cls.from_pretrained(
-        model_path / config["vae_kwargs"].get("vae_subpath", "vae"),
+        str(model_path / config["vae_kwargs"].get("vae_subpath", "vae")),
         additional_kwargs=OmegaConf.to_container(config["vae_kwargs"]),
     ).to(dtype)
     tokenizer = AutoTokenizer.from_pretrained(
-        model_path / config["text_encoder_kwargs"].get("tokenizer_subpath", "tokenizer")
+        str(model_path / config["text_encoder_kwargs"].get("tokenizer_subpath", "tokenizer"))
     )
     text_encoder = WanT5EncoderModel.from_pretrained(
-        model_path / config["text_encoder_kwargs"].get("text_encoder_subpath", "text_encoder"),
+        str(model_path / config["text_encoder_kwargs"].get("text_encoder_subpath", "text_encoder")),
         additional_kwargs=OmegaConf.to_container(config["text_encoder_kwargs"]),
         low_cpu_mem_usage=True,
         torch_dtype=dtype,

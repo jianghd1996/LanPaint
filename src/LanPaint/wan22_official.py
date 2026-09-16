@@ -21,6 +21,16 @@ class Wan22OfficialLanPaint(WanTI2V):
     """Official 48-channel Wan2.2-TI2V-5B with LanPaint inner sampling."""
 
     @torch.no_grad()
+    def vae_roundtrip(self, video: torch.Tensor) -> torch.Tensor:
+        """Encode/decode an input video with the official Wan2.2 VAE only."""
+
+        if video.shape[0] != 1:
+            raise ValueError("The validation baseline currently supports batch size 1")
+        source = video[0].to(self.device, dtype=torch.float32).mul(2.0).sub(1.0)
+        latent = self.vae.encode([source])[0]
+        return self.vae.decode([latent])[0]
+
+    @torch.no_grad()
     def inpaint(
         self,
         *,
@@ -52,11 +62,12 @@ class Wan22OfficialLanPaint(WanTI2V):
         generator = torch.Generator(device=self.device).manual_seed(seed)
         source_video = video[0].to(self.device, dtype=torch.float32).mul(2.0).sub(1.0)
         source_latent = self.vae.encode([source_video])[0].unsqueeze(0)
-        source_latent = source_latent.to(device=self.device, dtype=self.param_dtype)
+        # Match official Wan: diffusion latents and scheduler math stay FP32.
+        # Autocast only changes the model-forward compute dtype.
+        source_latent = source_latent.to(device=self.device, dtype=torch.float32)
         noise = torch.randn(source_latent.shape, generator=generator, device=self.device, dtype=torch.float32)
-        noise = noise.to(self.param_dtype)
 
-        regen = (regenerate_mask >= 127.5).to(device=self.device, dtype=self.param_dtype)
+        regen = (regenerate_mask >= 127.5).to(device=self.device, dtype=torch.float32)
         regen = F.interpolate(regen, size=source_latent.shape[-3:], mode="nearest")
         # Match LanPaint's conservative video-mask treatment: a painted pixel
         # affects neighboring temporal latent slices after 4x VAE compression.
@@ -106,8 +117,8 @@ class Wan22OfficialLanPaint(WanTI2V):
         self.model.to(self.device)
         with torch.amp.autocast("cuda", dtype=self.param_dtype), no_sync():
             for index in tqdm(range(sampling_steps), desc="Wan2.2-5B LanPaint"):
-                flow_sigma = sigmas[index].to(latent.dtype)
-                next_sigma = sigmas[index + 1].to(latent.dtype)
+                flow_sigma = sigmas[index]
+                next_sigma = sigmas[index + 1]
                 timestep = flow_sigma.float() * self.num_train_timesteps
                 # LanPaint's WAN22 override deliberately disables WAN22's
                 # per-token TI2V timestep conditioning. Every token sees the
